@@ -1,6 +1,6 @@
 /*
- * Master Controller - Component Test
- * Tests: 2 pushbuttons, 3 LEDs, 16x2 LCD
+ * Master - Minimal Integration Test
+ * Receives votes from Station B, tallies, broadcasts back, displays on LCD.
  */
 
 #include <LiquidCrystal.h>
@@ -11,92 +11,110 @@ const int LCD_D4 = 7;
 const int LCD_D5 = 8;
 const int LCD_D6 = 9;
 const int LCD_D7 = 10;
-
-const int BTN_RESET = 11;
-const int BTN_MODE  = 12;
-
 const int LED_YELLOW = 2;
 const int LED_GREEN  = 3;
 const int LED_RED    = 4;
+const int BTN_RESET  = 11;
+const int BTN_MODE   = 12;
 
 LiquidCrystal lcd(LCD_RS, LCD_E, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
-int lastResetState = HIGH;
-int lastModeState  = HIGH;
-bool modeSecret    = false;
+int votesA = 0;
+int votesB = 0;
+bool stationBVoted = false;
 
-unsigned long lastLedChange = 0;
-int ledPhase = 0;
-const unsigned long LED_INTERVAL = 800;
+int lastResetState = HIGH;
+
+void broadcastState() {
+  Serial.print("T:");
+  Serial.print(votesA);
+  Serial.print(",");
+  Serial.println(votesB);
+}
+
+void broadcastReset() {
+  Serial.println("R");
+}
+
+void resetRound() {
+  votesA = 0;
+  votesB = 0;
+  stationBVoted = false;
+  broadcastReset();
+  broadcastState();
+}
+
+void updateLeaderLED() {
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_GREEN,  LOW);
+  digitalWrite(LED_RED,    LOW);
+  if (votesA == 0 && votesB == 0) return;
+  if (votesA > votesB) digitalWrite(LED_GREEN, HIGH);
+  else if (votesB > votesA) digitalWrite(LED_RED, HIGH);
+  else digitalWrite(LED_YELLOW, HIGH);
+}
+
+void updateLcd() {
+  lcd.setCursor(0, 0);
+  lcd.print("Votes A:");
+  lcd.print(votesA);
+  lcd.print(" B:");
+  lcd.print(votesB);
+  lcd.print("  ");
+  lcd.setCursor(0, 1);
+  lcd.print("Press to vote   ");
+}
+
+void handleVote(char station, char choice) {
+  if (station == 'B' && !stationBVoted) {
+    stationBVoted = true;
+    if (choice == 'A') votesA++;
+    else if (choice == 'B') votesB++;
+    broadcastState();
+  }
+}
+
+void parseIncoming(const String& msg) {
+  if (msg.length() < 4 || msg.charAt(0) != 'V' || msg.charAt(2) != ':') return;
+  handleVote(msg.charAt(1), msg.charAt(3));
+}
 
 void setup() {
   Serial.begin(9600);
-  Serial.println(F("=== Master Test ==="));
 
-  pinMode(BTN_RESET, INPUT_PULLUP);
-  pinMode(BTN_MODE,  INPUT_PULLUP);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN,  OUTPUT);
   pinMode(LED_RED,    OUTPUT);
+  pinMode(BTN_RESET, INPUT_PULLUP);
 
   lcd.begin(16, 2);
-  lcd.print("Master Test");
-  lcd.setCursor(0, 1);
-  lcd.print("Booting...");
-  delay(1500);
+  lcd.print("Voting Ready");
+  delay(1000);
   lcd.clear();
+
+  broadcastReset();
 }
 
 void loop() {
-  if (millis() - lastLedChange > LED_INTERVAL) {
-    lastLedChange = millis();
-    ledPhase = (ledPhase + 1) % 5;
-
-    digitalWrite(LED_YELLOW, LOW);
-    digitalWrite(LED_GREEN,  LOW);
-    digitalWrite(LED_RED,    LOW);
-
-    switch (ledPhase) {
-      case 0: digitalWrite(LED_YELLOW, HIGH); break;
-      case 1: digitalWrite(LED_GREEN,  HIGH); break;
-      case 2: digitalWrite(LED_RED,    HIGH); break;
-      case 3:
-        digitalWrite(LED_YELLOW, HIGH);
-        digitalWrite(LED_GREEN,  HIGH);
-        digitalWrite(LED_RED,    HIGH);
-        break;
-      case 4: break;
-    }
+  // Receive votes
+  if (Serial.available()) {
+    String msg = Serial.readStringUntil('\n');
+    msg.trim();
+    if (msg.length() > 0) parseIncoming(msg);
   }
 
+  // Reset button
   int resetState = digitalRead(BTN_RESET);
-  int modeState  = digitalRead(BTN_MODE);
-
   if (resetState == LOW && lastResetState == HIGH) {
-    lcd.clear();
-    lcd.print("RESET PRESSED");
-    delay(400);
-    lcd.clear();
+    resetRound();
   }
   lastResetState = resetState;
 
-  if (modeState == LOW && lastModeState == HIGH) {
-    modeSecret = !modeSecret;
-    lcd.clear();
-    lcd.print("MODE: ");
-    lcd.print(modeSecret ? "SECRET" : "LIVE");
-    delay(400);
-    lcd.clear();
+  // Update outputs
+  static unsigned long lastUpdate = 0;
+  if (millis() - lastUpdate > 200) {
+    lastUpdate = millis();
+    updateLeaderLED();
+    updateLcd();
   }
-  lastModeState = modeState;
-
-  lcd.setCursor(0, 0);
-  lcd.print("Master Test");
-  lcd.setCursor(0, 1);
-  lcd.print("Mode:");
-  lcd.print(modeSecret ? "SEC " : "LIVE");
-  lcd.print(" L:");
-  lcd.print(ledPhase);
-
-  delay(20);
 }
