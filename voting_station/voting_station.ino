@@ -1,56 +1,47 @@
-/*
- * Station B - Audio-Visual Voter
- * Pins: BtnA=2, BtnB=3, StatusLED=4, Buzzer=5, Photo=A0
- * Hardware Serial (pin 0/1) talks to master.
- */
+#define BTN_A       2
+#define BTN_B       3
+#define STATUS_LED  4
+#define BUZZER      5
 
-const int BTN_A = 2;
-const int BTN_B = 3;
-const int STATUS_LED = 4;
-const int BUZZER = 5;
-const int PHOTO_PIN = A0;
+char ID = 'B';
 
-const char STATION_ID = 'B';
+int voted = 0;
+int prevA = HIGH;
+int prevB = HIGH;
 
-bool stationActive = true;
-int lastBtnA = HIGH;
-int lastBtnB = HIGH;
-
-int displayedA = 0;
-int displayedB = 0;
-char displayedMode = 'L';
+int countA = 0;
+int countB = 0;
+char mode = 'L';
 
 void sendVote(char choice) {
-  // Burst-send to survive master's round-robin listen window
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 8; i++) {
     Serial.print("V");
-    Serial.print(STATION_ID);
+    Serial.print(ID);
     Serial.print(":");
     Serial.println(choice);
     delay(30);
   }
 }
 
-void parseIncoming(const String& msg) {
+void handleMsg(String msg) {
   if (msg.length() == 0) return;
 
-  if (msg.charAt(0) == 'R') {
-    stationActive = true;
+  if (msg[0] == 'R') {
+    voted = 0;
     digitalWrite(STATUS_LED, HIGH);
-    displayedA = 0;
-    displayedB = 0;
+    countA = 0;
+    countB = 0;
     return;
   }
 
-  if (msg.charAt(0) == 'T') {
-    int firstColon  = msg.indexOf(':');
-    int firstComma  = msg.indexOf(',');
-    int secondComma = msg.indexOf(',', firstComma + 1);
-    if (firstColon < 0 || firstComma < 0 || secondComma < 0) return;
-
-    displayedA = msg.substring(firstColon + 1, firstComma).toInt();
-    displayedB = msg.substring(firstComma + 1, secondComma).toInt();
-    displayedMode = msg.charAt(secondComma + 1);
+  if (msg[0] == 'T') {
+    int c1 = msg.indexOf(':');
+    int c2 = msg.indexOf(',');
+    int c3 = msg.indexOf(',', c2 + 1);
+    if (c1 < 0 || c2 < 0 || c3 < 0) return;
+    countA = msg.substring(c1 + 1, c2).toInt();
+    countB = msg.substring(c2 + 1, c3).toInt();
+    mode = msg[c3 + 1];
   }
 }
 
@@ -67,28 +58,28 @@ void loop() {
   if (Serial.available()) {
     String msg = Serial.readStringUntil('\n');
     msg.trim();
-    parseIncoming(msg);
+    handleMsg(msg);
   }
 
-  int btnAState = digitalRead(BTN_A);
-  int btnBState = digitalRead(BTN_B);
+  int a = digitalRead(BTN_A);
+  int b = digitalRead(BTN_B);
 
-  if (stationActive) {
-    if (btnAState == LOW && lastBtnA == HIGH) {
+  if (!voted) {
+    if (a == LOW && prevA == HIGH) {
       tone(BUZZER, 1000, 150);
-      stationActive = false;
+      voted = 1;
       digitalWrite(STATUS_LED, LOW);
       sendVote('A');
     }
-    if (btnBState == LOW && lastBtnB == HIGH) {
+    if (b == LOW && prevB == HIGH) {
       tone(BUZZER, 1500, 150);
-      stationActive = false;
+      voted = 1;
       digitalWrite(STATUS_LED, LOW);
       sendVote('B');
     }
   }
-  lastBtnA = btnAState;
-  lastBtnB = btnBState;
 
+  prevA = a;
+  prevB = b;
   delay(20);
 }

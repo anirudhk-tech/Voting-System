@@ -1,107 +1,106 @@
-/*
- * Station A - Standard Voter (LED bar graph)
- * Pins: BtnA=8, BtnB=9, LEDs=5,4,3,2, Photo=A0
- * Hardware Serial (pin 0/1) talks to master.
- */
+// Station A - LED bar graph voter
+// buttons: 8, 9   LEDs: 5 4 3 2
 
 const int BTN_A = 8;
 const int BTN_B = 9;
-const int LED_PINS[4] = {5, 4, 3, 2};
-const int PHOTO_PIN = A0;
-
+const int LEDS[4] = {5, 4, 3, 2};
 const char STATION_ID = 'A';
 
-bool stationActive = true;
-int lastBtnA = HIGH;
-int lastBtnB = HIGH;
+boolean active = true;
+int prevBtnA = HIGH;
+int prevBtnB = HIGH;
 
-int displayedA = 0;
-int displayedB = 0;
-char displayedMode = 'L';
-bool resultsRevealed = true;
+int scoreA = 0;
+int scoreB = 0;
+char currentMode = 'L';
+boolean showResults = true;
 
-void setBar(int level) {
+void setBar(int n) {
   for (int i = 0; i < 4; i++) {
-    digitalWrite(LED_PINS[i], i < level ? HIGH : LOW);
+    digitalWrite(LEDS[i], (i < n) ? HIGH : LOW);
   }
 }
 
-void sendVote(char choice) {
-  for (int i = 0; i < 3; i++) {
+void sendVote(char v) {
+  for (int i = 0; i < 8; i++) {
     Serial.print("V");
     Serial.print(STATION_ID);
     Serial.print(":");
-    Serial.println(choice);
+    Serial.println(v);
     delay(30);
   }
 }
 
-void parseIncoming(const String& msg) {
+void parseMsg(const String& msg) {
   if (msg.length() == 0) return;
 
   if (msg.charAt(0) == 'R') {
-    stationActive = true;
-    displayedA = 0;
-    displayedB = 0;
-    resultsRevealed = true;
+    active = true;
+    scoreA = 0;
+    scoreB = 0;
+    showResults = true;
     return;
   }
 
   if (msg.charAt(0) == 'T') {
-    int firstColon  = msg.indexOf(':');
-    int firstComma  = msg.indexOf(',');
-    int secondComma = msg.indexOf(',', firstComma + 1);
-    if (firstColon < 0 || firstComma < 0 || secondComma < 0) return;
-
-    displayedA = msg.substring(firstColon + 1, firstComma).toInt();
-    displayedB = msg.substring(firstComma + 1, secondComma).toInt();
-    displayedMode = msg.charAt(secondComma + 1);
-    resultsRevealed = true;
+    int p1 = msg.indexOf(':');
+    int p2 = msg.indexOf(',');
+    int p3 = msg.indexOf(',', p2 + 1);
+    if (p1 < 0 || p2 < 0 || p3 < 0) return;
+    scoreA = msg.substring(p1 + 1, p2).toInt();
+    scoreB = msg.substring(p2 + 1, p3).toInt();
+    currentMode = msg.charAt(p3 + 1);
+    showResults = true;
   }
 }
 
 void setup() {
   Serial.begin(9600);
+
   pinMode(BTN_A, INPUT_PULLUP);
   pinMode(BTN_B, INPUT_PULLUP);
+
   for (int i = 0; i < 4; i++) {
-    pinMode(LED_PINS[i], OUTPUT);
+    pinMode(LEDS[i], OUTPUT);
   }
   setBar(0);
 }
 
 void loop() {
   if (Serial.available()) {
-    String msg = Serial.readStringUntil('\n');
-    msg.trim();
-    parseIncoming(msg);
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    parseMsg(line);
   }
 
-  int btnAState = digitalRead(BTN_A);
-  int btnBState = digitalRead(BTN_B);
+  int btnA = digitalRead(BTN_A);
+  int btnB = digitalRead(BTN_B);
 
-  if (stationActive) {
-    if (btnAState == LOW && lastBtnA == HIGH) {
-      stationActive = false;
-      if (displayedMode == 'S') resultsRevealed = false;
+  if (active) {
+    if (btnA == LOW && prevBtnA == HIGH) {
+      active = false;
+      if (currentMode == 'S') showResults = false;
       sendVote('A');
     }
-    if (btnBState == LOW && lastBtnB == HIGH) {
-      stationActive = false;
-      if (displayedMode == 'S') resultsRevealed = false;
+    if (btnB == LOW && prevBtnB == HIGH) {
+      active = false;
+      if (currentMode == 'S') showResults = false;
       sendVote('B');
     }
   }
-  lastBtnA = btnAState;
-  lastBtnB = btnBState;
 
-  if (resultsRevealed) {
-    int level = max(displayedA, displayedB);
-    if (level > 4) level = 4;
-    setBar(level);
+  prevBtnA = btnA;
+  prevBtnB = btnB;
+
+  if (showResults) {
+    int bars = max(scoreA, scoreB);
+    if (bars > 4) bars = 4;
+    setBar(bars);
   } else {
-    bool on = (millis() / 400) % 2;
-    for (int i = 0; i < 4; i++) digitalWrite(LED_PINS[i], on ? HIGH : LOW);
+    boolean lit = (millis() / 400) % 2;
+    for (int i = 0; i < 4; i++) {
+      digitalWrite(LEDS[i], lit ? HIGH : LOW);
+    }
   }
 
   delay(20);

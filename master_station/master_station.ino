@@ -1,169 +1,125 @@
-/*
- * Master Controller - Real-Time Voting System
- * Stations B (A0/A1), D (A2/A3), A (A4/A5) via SoftwareSerial.
- * USB Serial (pin 0/1) used for debug output.
- */
+// Voting system master controller
+// Station B: A0(rx)/A1(tx)   Station D: A2(rx)/A3(tx)   Station A: A4(rx)/A5(tx)
+// debug output on USB serial
 
 #include <LiquidCrystal.h>
 #include <SoftwareSerial.h>
 
-const int LCD_RS = 5, LCD_E = 6, LCD_D4 = 7, LCD_D5 = 8, LCD_D6 = 9, LCD_D7 = 10;
-const int LED_YELLOW = 2, LED_GREEN = 3, LED_RED = 4;
-const int BTN_RESET = 11, BTN_MODE = 12;
+LiquidCrystal lcd(5, 6, 7, 8, 9, 10);
 
-SoftwareSerial stationB(A0, A1);  // RX=A0, TX=A1
-SoftwareSerial stationD(A2, A3);  // RX=A2, TX=A3
-SoftwareSerial stationA(A4, A5);  // RX=A4, TX=A5
+SoftwareSerial chanB(A0, A1);
+SoftwareSerial chanD(A2, A3);
+SoftwareSerial chanA(A4, A5);
 
-const int NUM_STATIONS = 3;
-const char STATION_IDS[NUM_STATIONS] = {'B', 'D', 'A'};
+const int LED_Y = 2, LED_G = 3, LED_R = 4;
+const int BTN_RST = 11, BTN_MOD = 12;
 
-SoftwareSerial* channels[NUM_STATIONS] = {&stationB, &stationD, &stationA};
+const int N = 3;
+const char IDS[N] = {'B', 'D', 'A'};
+SoftwareSerial* ch[N] = {&chanB, &chanD, &chanA};
 
-LiquidCrystal lcd(LCD_RS, LCD_E, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
+int vA = 0, vB = 0;
+bool voted[N] = {false, false, false};
+char mode = 'L';
+char nextMode = 'L';
 
-int votesA = 0;
-int votesB = 0;
-bool stationVoted[NUM_STATIONS] = {false, false, false};
+int rstLast = HIGH, modLast = HIGH;
 
-char currentMode = 'L';
-char pendingMode = 'L';
+unsigned long dispTimer = 0;
+unsigned long switchTimer = 0;
+int cur = 0;
 
-int lastResetState = HIGH;
-int lastModeState  = HIGH;
+const unsigned long DISP_MS = 200;
+const unsigned long WIN_MS = 30;
 
-unsigned long lastDisplayUpdate = 0;
-const unsigned long DISPLAY_INTERVAL = 200;
-
-unsigned long lastListenSwitch = 0;
-const unsigned long LISTEN_WINDOW = 100;
-int activeChannel = 0;
-
-int stationIndex(char id) {
-  for (int i = 0; i < NUM_STATIONS; i++) {
-    if (STATION_IDS[i] == id) return i;
+int getIdx(char id) {
+  for (int i = 0; i < N; i++) {
+    if (IDS[i] == id) return i;
   }
   return -1;
 }
 
-bool allStationsVoted() {
-  for (int i = 0; i < NUM_STATIONS; i++) {
-    if (!stationVoted[i]) return false;
-  }
+bool allVoted() {
+  for (int i = 0; i < N; i++) if (!voted[i]) return false;
   return true;
 }
 
-void broadcast(const String& msg) {
-  for (int i = 0; i < NUM_STATIONS; i++) {
-    channels[i]->println(msg);
-  }
+void sendAll(const String& msg) {
+  for (int i = 0; i < N; i++) ch[i]->println(msg);
   Serial.print("TX: "); Serial.println(msg);
 }
 
-void broadcastState() {
-  String msg = "T:";
-  msg += votesA;
-  msg += ",";
-  msg += votesB;
-  msg += ",";
-  msg += currentMode;
-  broadcast(msg);
+void pushState() {
+  String s = "T:";
+  s += vA; s += ","; s += vB; s += ","; s += mode;
+  sendAll(s);
 }
 
-void broadcastReset() {
-  broadcast("R");
+void doReset() {
+  vA = 0; vB = 0;
+  for (int i = 0; i < N; i++) voted[i] = false;
+  mode = nextMode;
+  sendAll("R");
+  pushState();
 }
 
-void resetRound() {
-  votesA = 0;
-  votesB = 0;
-  for (int i = 0; i < NUM_STATIONS; i++) stationVoted[i] = false;
-  currentMode = pendingMode;
-  broadcastReset();
-  broadcastState();
-}
-
-void handleVote(char station, char choice) {
-  int idx = stationIndex(station);
-  if (idx < 0) return;
-  if (stationVoted[idx]) return;
-
-  stationVoted[idx] = true;
-  if (choice == 'A') votesA++;
-  else if (choice == 'B') votesB++;
+void onVote(char station, char choice) {
+  int idx = getIdx(station);
+  if (idx < 0 || voted[idx]) return;
+  voted[idx] = true;
+  if (choice == 'A') vA++;
+  else if (choice == 'B') vB++;
   else return;
-
-  if (currentMode == 'L' || allStationsVoted()) {
-    broadcastState();
-  }
+  if (mode == 'L' || allVoted()) pushState();
 }
 
-void parseIncoming(const String& msg) {
-  Serial.print("RX: "); Serial.println(msg);
-  if (msg.length() < 4 || msg.charAt(0) != 'V' || msg.charAt(2) != ':') return;
-  handleVote(msg.charAt(1), msg.charAt(3));
-}
-
-void readActiveChannel() {
-  SoftwareSerial* ch = channels[activeChannel];
-  while (ch->available()) {
-    String msg = ch->readStringUntil('\n');
+void readCh() {
+  SoftwareSerial* s = ch[cur];
+  while (s->available()) {
+    String msg = s->readStringUntil('\n');
     msg.trim();
-    if (msg.length() > 0) parseIncoming(msg);
+    if (msg.length() < 4) continue;
+    Serial.print("RX: "); Serial.println(msg);
+    if (msg.charAt(0) == 'V' && msg.charAt(2) == ':')
+      onVote(msg.charAt(1), msg.charAt(3));
   }
 }
 
-void switchListenChannel() {
-  activeChannel = (activeChannel + 1) % NUM_STATIONS;
-  channels[activeChannel]->listen();
+void updateLEDs() {
+  digitalWrite(LED_Y, LOW);
+  digitalWrite(LED_G, LOW);
+  digitalWrite(LED_R, LOW);
+  if (mode == 'S' && !allVoted()) return;
+  if (vA == 0 && vB == 0) return;
+  if (vA > vB)      digitalWrite(LED_G, HIGH);
+  else if (vB > vA) digitalWrite(LED_R, HIGH);
+  else              digitalWrite(LED_Y, HIGH);
 }
 
-void updateLeaderLED() {
-  digitalWrite(LED_YELLOW, LOW);
-  digitalWrite(LED_GREEN,  LOW);
-  digitalWrite(LED_RED,    LOW);
-
-  if (currentMode == 'S' && !allStationsVoted()) return;
-  if (votesA == 0 && votesB == 0) return;
-
-  if (votesA > votesB) digitalWrite(LED_GREEN, HIGH);
-  else if (votesB > votesA) digitalWrite(LED_RED, HIGH);
-  else digitalWrite(LED_YELLOW, HIGH);
-}
-
-void updateLcd() {
+void updateLCD() {
   lcd.setCursor(0, 0);
-  if (currentMode == 'S' && !allStationsVoted()) {
+  if (mode == 'S' && !allVoted()) {
     lcd.print("Votes hidden    ");
   } else {
-    lcd.print("A:");
-    lcd.print(votesA);
-    lcd.print(" B:");
-    lcd.print(votesB);
+    lcd.print("A:"); lcd.print(vA);
+    lcd.print(" B:"); lcd.print(vB);
     lcd.print("           ");
   }
-
   lcd.setCursor(0, 1);
   lcd.print("Mode:");
-  lcd.print(currentMode == 'L' ? "LIVE   " : "SECRET ");
-  if (pendingMode != currentMode) lcd.print("*");
-  else lcd.print(" ");
+  lcd.print(mode == 'L' ? "LIVE   " : "SECRET ");
+  lcd.print(nextMode != mode ? "*" : " ");
   lcd.print("    ");
 }
 
 void setup() {
   Serial.begin(9600);
-  for (int i = 0; i < NUM_STATIONS; i++) {
-    channels[i]->begin(9600);
-  }
-  channels[0]->listen();
-  activeChannel = 0;
 
-  pinMode(LED_YELLOW, OUTPUT);
-  pinMode(LED_GREEN,  OUTPUT);
-  pinMode(LED_RED,    OUTPUT);
-  pinMode(BTN_RESET, INPUT_PULLUP);
-  pinMode(BTN_MODE,  INPUT_PULLUP);
+  for (int i = 0; i < N; i++) ch[i]->begin(9600);
+  ch[0]->listen();
+
+  pinMode(LED_Y, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_R, OUTPUT);
+  pinMode(BTN_RST, INPUT_PULLUP); pinMode(BTN_MOD, INPUT_PULLUP);
 
   lcd.begin(16, 2);
   lcd.print("Voting System");
@@ -173,34 +129,30 @@ void setup() {
   lcd.clear();
 
   Serial.println("=== Master ready ===");
-
-  broadcastReset();
-  broadcastState();
+  doReset();
 }
 
 void loop() {
-  readActiveChannel();
+  readCh();
 
-  if (millis() - lastListenSwitch > LISTEN_WINDOW) {
-    lastListenSwitch = millis();
-    switchListenChannel();
+  if (millis() - switchTimer > WIN_MS) {
+    switchTimer = millis();
+    cur = (cur + 1) % N;
+    ch[cur]->listen();
   }
 
-  int resetState = digitalRead(BTN_RESET);
-  if (resetState == LOW && lastResetState == HIGH) {
-    resetRound();
-  }
-  lastResetState = resetState;
+  int rst = digitalRead(BTN_RST);
+  if (rst == LOW && rstLast == HIGH) doReset();
+  rstLast = rst;
 
-  int modeState = digitalRead(BTN_MODE);
-  if (modeState == LOW && lastModeState == HIGH) {
-    pendingMode = (pendingMode == 'L') ? 'S' : 'L';
-  }
-  lastModeState = modeState;
+  int mod = digitalRead(BTN_MOD);
+  if (mod == LOW && modLast == HIGH)
+    nextMode = (nextMode == 'L') ? 'S' : 'L';
+  modLast = mod;
 
-  if (millis() - lastDisplayUpdate > DISPLAY_INTERVAL) {
-    lastDisplayUpdate = millis();
-    updateLeaderLED();
-    updateLcd();
+  if (millis() - dispTimer > DISP_MS) {
+    dispTimer = millis();
+    updateLEDs();
+    updateLCD();
   }
 }
