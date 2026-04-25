@@ -1,21 +1,29 @@
-#include <SoftwareSerial.h>
-SoftwareSerial s(A2, A3);  // RX=A2, TX=A3
+/*
+ * Master - Hardware Serial Test
+ * Echoes anything received from Station B by blinking the onboard LED (pin 13).
+ * Also sends "PING" to Station B every 2 seconds.
+ */
+
+const int LED = 13;  // built-in LED
 
 void setup() {
   Serial.begin(9600);
-  delay(1000);
-  s.begin(9600);
-  s.listen();
-  Serial.println("Ready");
+  pinMode(LED, OUTPUT);
 }
 
 void loop() {
-  s.println("PING");
-  delay(100);
-  while (s.available()) {
-    char c = s.read();
-    Serial.print("GOT: ");
-    Serial.println(c);
+  // Blink LED briefly when data is received
+  if (Serial.available()) {
+    char c = Serial.read();
+    digitalWrite(LED, HIGH);
+    delay(50);
+    digitalWrite(LED, LOW);
   }
-  delay(900);
+
+  // Send a ping every 2 seconds
+  static unsigned long last = 0;
+  if (millis() - last > 2000) {
+    last = millis();
+    Serial.println("PING");
+  }
 }
