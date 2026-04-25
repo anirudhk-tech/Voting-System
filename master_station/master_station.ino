@@ -1,6 +1,7 @@
 /*
- * Master Controller - 2-Station Voting
- * Stations B (A0/A1) and D (A2/A3) via SoftwareSerial.
+ * Master Controller - Real-Time Voting System
+ * Stations B (A0/A1), D (A2/A3), A (A4/A5) via SoftwareSerial.
+ * USB Serial (pin 0/1) used for debug output.
  */
 
 #include <LiquidCrystal.h>
@@ -12,9 +13,15 @@ const int BTN_RESET = 11, BTN_MODE = 12;
 
 SoftwareSerial stationB(A0, A1);  // RX=A0, TX=A1
 SoftwareSerial stationD(A2, A3);  // RX=A2, TX=A3
+SoftwareSerial stationA(A4, A5);  // RX=A4, TX=A5
 
+// Set NUM_STATIONS to match how many stations are physically connected.
+// Add station IDs to STATION_IDS in the same order as the channels[] array below.
 const int NUM_STATIONS = 2;
 const char STATION_IDS[NUM_STATIONS] = {'B', 'D'};
+
+// Channel registry — index into this matches STATION_IDS order.
+SoftwareSerial* channels[] = {&stationB, &stationD, &stationA};
 
 LiquidCrystal lcd(LCD_RS, LCD_E, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
@@ -31,10 +38,9 @@ int lastModeState  = HIGH;
 unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_INTERVAL = 200;
 
-// Round-robin listen state
 unsigned long lastListenSwitch = 0;
-const unsigned long LISTEN_WINDOW = 50;  // ms per channel
-int activeChannel = 0;  // 0=B, 1=D
+const unsigned long LISTEN_WINDOW = 20;
+int activeChannel = 0;
 
 int stationIndex(char id) {
   for (int i = 0; i < NUM_STATIONS; i++) {
@@ -51,9 +57,9 @@ bool allStationsVoted() {
 }
 
 void broadcast(const String& msg) {
-  // Send through every channel — both stations receive parallel broadcasts
-  stationB.println(msg);
-  stationD.println(msg);
+  for (int i = 0; i < NUM_STATIONS; i++) {
+    channels[i]->println(msg);
+  }
   Serial.print("TX: "); Serial.println(msg);
 }
 
@@ -102,9 +108,9 @@ void parseIncoming(const String& msg) {
 }
 
 void readActiveChannel() {
-  SoftwareSerial& ch = (activeChannel == 0) ? stationB : stationD;
-  while (ch.available()) {
-    String msg = ch.readStringUntil('\n');
+  SoftwareSerial* ch = channels[activeChannel];
+  while (ch->available()) {
+    String msg = ch->readStringUntil('\n');
     msg.trim();
     if (msg.length() > 0) parseIncoming(msg);
   }
@@ -112,8 +118,7 @@ void readActiveChannel() {
 
 void switchListenChannel() {
   activeChannel = (activeChannel + 1) % NUM_STATIONS;
-  if (activeChannel == 0) stationB.listen();
-  else                    stationD.listen();
+  channels[activeChannel]->listen();
 }
 
 void updateLeaderLED() {
@@ -151,9 +156,10 @@ void updateLcd() {
 
 void setup() {
   Serial.begin(9600);
-  stationB.begin(9600);
-  stationD.begin(9600);
-  stationB.listen();  // start listening to B
+  for (int i = 0; i < NUM_STATIONS; i++) {
+    channels[i]->begin(9600);
+  }
+  channels[0]->listen();
   activeChannel = 0;
 
   pinMode(LED_YELLOW, OUTPUT);
@@ -176,16 +182,13 @@ void setup() {
 }
 
 void loop() {
-  // Read whichever channel is currently listening
   readActiveChannel();
 
-  // Round-robin between channels every LISTEN_WINDOW ms
   if (millis() - lastListenSwitch > LISTEN_WINDOW) {
     lastListenSwitch = millis();
     switchListenChannel();
   }
 
-  // Buttons
   int resetState = digitalRead(BTN_RESET);
   if (resetState == LOW && lastResetState == HIGH) {
     resetRound();
@@ -198,7 +201,6 @@ void loop() {
   }
   lastModeState = modeState;
 
-  // Display
   if (millis() - lastDisplayUpdate > DISPLAY_INTERVAL) {
     lastDisplayUpdate = millis();
     updateLeaderLED();
