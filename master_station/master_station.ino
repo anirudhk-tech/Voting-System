@@ -15,19 +15,16 @@ SoftwareSerial stationB(A0, A1);  // RX=A0, TX=A1
 SoftwareSerial stationD(A2, A3);  // RX=A2, TX=A3
 SoftwareSerial stationA(A4, A5);  // RX=A4, TX=A5
 
-// Set NUM_STATIONS to match how many stations are physically connected.
-// Add station IDs to STATION_IDS in the same order as the channels[] array below.
-const int NUM_STATIONS = 2;
-const char STATION_IDS[NUM_STATIONS] = {'B', 'D'};
+const int NUM_STATIONS = 3;
+const char STATION_IDS[NUM_STATIONS] = {'B', 'D', 'A'};
 
-// Channel registry — index into this matches STATION_IDS order.
-SoftwareSerial* channels[] = {&stationB, &stationD, &stationA};
+SoftwareSerial* channels[NUM_STATIONS] = {&stationB, &stationD, &stationA};
 
 LiquidCrystal lcd(LCD_RS, LCD_E, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
 int votesA = 0;
 int votesB = 0;
-bool stationVoted[NUM_STATIONS] = {false, false};
+bool stationVoted[NUM_STATIONS] = {false, false, false};
 
 char currentMode = 'L';
 char pendingMode = 'L';
@@ -39,7 +36,7 @@ unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_INTERVAL = 200;
 
 unsigned long lastListenSwitch = 0;
-const unsigned long LISTEN_WINDOW = 20;
+const unsigned long LISTEN_WINDOW = 100;
 int activeChannel = 0;
 
 int stationIndex(char id) {
