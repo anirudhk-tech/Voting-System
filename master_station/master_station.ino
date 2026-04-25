@@ -1,35 +1,29 @@
 /*
- * Master Controller - Real-Time Voting System
- *
- * Currently configured for Station B only via hardware serial (pins 0/1).
- * Designed to extend to Stations A and D via SoftwareSerial.
- *
- * Pins:
- *   LCD: RS=5, E=6, D4=7, D5=8, D6=9, D7=10
- *   LEDs: Yellow=2, Green=3, Red=4
- *   Buttons: Reset=11, Mode=12
+ * Master Controller - 2-Station Voting
+ * Stations B (A0/A1) and D (A2/A3) via SoftwareSerial.
  */
 
 #include <LiquidCrystal.h>
+#include <SoftwareSerial.h>
 
-// ===== PINS =====
 const int LCD_RS = 5, LCD_E = 6, LCD_D4 = 7, LCD_D5 = 8, LCD_D6 = 9, LCD_D7 = 10;
 const int LED_YELLOW = 2, LED_GREEN = 3, LED_RED = 4;
 const int BTN_RESET = 11, BTN_MODE = 12;
 
-// ===== STATION CONFIG (extend here when adding stations) =====
-const int NUM_STATIONS = 1;
-const char STATION_IDS[NUM_STATIONS] = {'B'};
+SoftwareSerial stationB(A0, A1);  // RX=A0, TX=A1
+SoftwareSerial stationD(A2, A3);  // RX=A2, TX=A3
 
-// ===== STATE =====
+const int NUM_STATIONS = 2;
+const char STATION_IDS[NUM_STATIONS] = {'B', 'D'};
+
 LiquidCrystal lcd(LCD_RS, LCD_E, LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
 int votesA = 0;
 int votesB = 0;
-bool stationVoted[NUM_STATIONS] = {false};
+bool stationVoted[NUM_STATIONS] = {false, false};
 
-char currentMode = 'L';   // 'L' = Live, 'S' = Secret Ballot
-char pendingMode = 'L';   // takes effect on next reset
+char currentMode = 'L';
+char pendingMode = 'L';
 
 int lastResetState = HIGH;
 int lastModeState  = HIGH;
@@ -37,7 +31,11 @@ int lastModeState  = HIGH;
 unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_INTERVAL = 200;
 
-// ===== HELPERS =====
+// Round-robin listen state
+unsigned long lastListenSwitch = 0;
+const unsigned long LISTEN_WINDOW = 50;  // ms per channel
+int activeChannel = 0;  // 0=B, 1=D
+
 int stationIndex(char id) {
   for (int i = 0; i < NUM_STATIONS; i++) {
     if (STATION_IDS[i] == id) return i;
@@ -52,11 +50,11 @@ bool allStationsVoted() {
   return true;
 }
 
-// ===== BROADCASTS =====
-// In future: send via every active serial channel.
-// For now: just the hardware Serial port (Station B).
 void broadcast(const String& msg) {
-  Serial.println(msg);
+  // Send through every channel — both stations receive parallel broadcasts
+  stationB.println(msg);
+  stationD.println(msg);
+  Serial.print("TX: "); Serial.println(msg);
 }
 
 void broadcastState() {
@@ -73,7 +71,6 @@ void broadcastReset() {
   broadcast("R");
 }
 
-// ===== ROUND CONTROL =====
 void resetRound() {
   votesA = 0;
   votesB = 0;
@@ -83,37 +80,47 @@ void resetRound() {
   broadcastState();
 }
 
-// ===== VOTE HANDLING =====
 void handleVote(char station, char choice) {
   int idx = stationIndex(station);
-  if (idx < 0) return;             // unknown station
-  if (stationVoted[idx]) return;   // already voted
+  if (idx < 0) return;
+  if (stationVoted[idx]) return;
 
   stationVoted[idx] = true;
   if (choice == 'A') votesA++;
   else if (choice == 'B') votesB++;
   else return;
 
-  // Live: broadcast every vote
-  // Secret: only broadcast when all stations voted
   if (currentMode == 'L' || allStationsVoted()) {
     broadcastState();
   }
 }
 
 void parseIncoming(const String& msg) {
-  // Expect "V<station>:<choice>"
+  Serial.print("RX: "); Serial.println(msg);
   if (msg.length() < 4 || msg.charAt(0) != 'V' || msg.charAt(2) != ':') return;
   handleVote(msg.charAt(1), msg.charAt(3));
 }
 
-// ===== DISPLAY =====
+void readActiveChannel() {
+  SoftwareSerial& ch = (activeChannel == 0) ? stationB : stationD;
+  while (ch.available()) {
+    String msg = ch.readStringUntil('\n');
+    msg.trim();
+    if (msg.length() > 0) parseIncoming(msg);
+  }
+}
+
+void switchListenChannel() {
+  activeChannel = (activeChannel + 1) % NUM_STATIONS;
+  if (activeChannel == 0) stationB.listen();
+  else                    stationD.listen();
+}
+
 void updateLeaderLED() {
   digitalWrite(LED_YELLOW, LOW);
   digitalWrite(LED_GREEN,  LOW);
   digitalWrite(LED_RED,    LOW);
 
-  // In Secret mode, don't reveal leader until all voted
   if (currentMode == 'S' && !allStationsVoted()) return;
   if (votesA == 0 && votesB == 0) return;
 
@@ -142,9 +149,12 @@ void updateLcd() {
   lcd.print("    ");
 }
 
-// ===== SETUP / LOOP =====
 void setup() {
   Serial.begin(9600);
+  stationB.begin(9600);
+  stationD.begin(9600);
+  stationB.listen();  // start listening to B
+  activeChannel = 0;
 
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_GREEN,  OUTPUT);
@@ -159,16 +169,20 @@ void setup() {
   delay(1000);
   lcd.clear();
 
+  Serial.println("=== Master ready ===");
+
   broadcastReset();
   broadcastState();
 }
 
 void loop() {
-  // Receive from stations
-  if (Serial.available()) {
-    String msg = Serial.readStringUntil('\n');
-    msg.trim();
-    if (msg.length() > 0) parseIncoming(msg);
+  // Read whichever channel is currently listening
+  readActiveChannel();
+
+  // Round-robin between channels every LISTEN_WINDOW ms
+  if (millis() - lastListenSwitch > LISTEN_WINDOW) {
+    lastListenSwitch = millis();
+    switchListenChannel();
   }
 
   // Buttons
@@ -184,7 +198,7 @@ void loop() {
   }
   lastModeState = modeState;
 
-  // Display refresh
+  // Display
   if (millis() - lastDisplayUpdate > DISPLAY_INTERVAL) {
     lastDisplayUpdate = millis();
     updateLeaderLED();
