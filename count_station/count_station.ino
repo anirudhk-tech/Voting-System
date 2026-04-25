@@ -1,19 +1,19 @@
 /*
  * Station D - Adaptive Voter (7-segment numeric display)
- * Pins: 7-seg a=8,b=5,c=4,d=3,e=2,f=7,g=9,dp=6
+ * Pins: 7-seg a=7, b=6, c=3, d=4, e=5, f=8, g=9, dp=2
  *       Buttons: A=11, B=12
  *       Photoresistor: A0
  * Hardware Serial (pin 0/1) talks to master.
  */
 
-const int SEG_A = 8;
-const int SEG_B = 5;
-const int SEG_C = 4;
-const int SEG_D = 3;
-const int SEG_E = 2;
-const int SEG_F = 7;
+const int SEG_A = 7;
+const int SEG_B = 6;
+const int SEG_C = 3;
+const int SEG_D = 4;
+const int SEG_E = 5;
+const int SEG_F = 8;
 const int SEG_G = 9;
-const int SEG_DP = 6;
+const int SEG_DP = 2;
 
 const int BTN_A = 11;
 const int BTN_B = 12;
@@ -26,16 +26,16 @@ const char STATION_ID = 'D';
 const int segPins[7] = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G};
 
 const byte digitPatterns[10][7] = {
-  {1,1,1,1,1,1,0},
-  {0,1,1,0,0,0,0},
-  {1,1,0,1,1,0,1},
-  {1,1,1,1,0,0,1},
-  {0,1,1,0,0,1,1},
-  {1,0,1,1,0,1,1},
-  {1,0,1,1,1,1,1},
-  {1,1,1,0,0,0,0},
-  {1,1,1,1,1,1,1},
-  {1,1,1,1,0,1,1}
+  {1,1,1,1,1,1,0},  // 0
+  {0,1,1,0,0,0,0},  // 1
+  {1,1,0,1,1,0,1},  // 2
+  {1,1,1,1,0,0,1},  // 3
+  {0,1,1,0,0,1,1},  // 4
+  {1,0,1,1,0,1,1},  // 5
+  {1,0,1,1,1,1,1},  // 6
+  {1,1,1,0,0,0,0},  // 7
+  {1,1,1,1,1,1,1},  // 8
+  {1,1,1,1,0,1,1}   // 9
 };
 
 const byte patternBlank[7] = {0,0,0,0,0,0,0};
